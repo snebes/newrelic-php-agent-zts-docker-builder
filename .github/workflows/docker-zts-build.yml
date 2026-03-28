@@ -62,8 +62,8 @@ jobs:
       - name: Checkout upstream source
         uses: actions/checkout@v6
         with:
-          repository: ${{ inputs.upstream-repository }}
-          ref: ${{ inputs.upstream-ref }}
+          repository: ${{ env.upstream-repo }}
+          ref: ${{ env.upstream-ref }}
           path: ${{ env.repo-dir }}
 
       - name: Set up QEMU
