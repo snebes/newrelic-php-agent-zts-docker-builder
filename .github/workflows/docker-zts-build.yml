@@ -50,14 +50,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          #          - platform: linux/amd64
-          #            slug: linux-amd64
+          - platform: linux/amd64
+            slug: linux-amd64
           #          - platform: linux/arm64
           #            slug: linux-arm64
           #          - platform: linux/arm/v7
           #            slug: linux-arm-v7
-          - platform: linux/386
-            slug: linux-386
+#          - platform: linux/386
+#            slug: linux-386
     steps:
       - name: Checkout upstream source
         uses: actions/checkout@v6
