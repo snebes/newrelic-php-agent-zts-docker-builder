@@ -3,6 +3,12 @@ name: Build New Relic PHP agent (ZTS) multi-arch release
 permissions:
   contents: write
 
+env:
+  upstream-repo: theophileds/newrelic-php-agent-zts
+  upstream-ref: zts-support
+  repo-dir: repo
+  frankenphp-image: dunglas/frankenphp
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,18 +16,6 @@ on:
         description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
         required: true
         default: 1-php8.4
-      frankenphp-image:
-        description: Image repository without tag (default dunglas/frankenphp)
-        required: false
-        default: dunglas/frankenphp
-      upstream-repository:
-        description: Upstream repo containing Dockerfile.zts-build
-        required: false
-        default: theophileds/newrelic-php-agent-zts
-      upstream-ref:
-        description: Branch, tag, or SHA to build
-        required: false
-        default: zts-support
       release_tag:
         description: Git tag for the GitHub release (leave empty to auto-generate)
         required: false
@@ -37,21 +31,6 @@ on:
         description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
         required: true
         type: string
-      frankenphp-image:
-        description: Image repository without tag
-        required: false
-        type: string
-        default: dunglas/frankenphp
-      upstream-repository:
-        description: Upstream repo containing Dockerfile.zts-build
-        required: false
-        type: string
-        default: theophileds/newrelic-php-agent-zts
-      upstream-ref:
-        description: Branch, tag, or SHA to build
-        required: false
-        type: string
-        default: zts-support
       release_tag:
         description: Git tag for the GitHub release (empty = auto)
         required: false
@@ -63,62 +42,29 @@ on:
         type: boolean
         default: true
 
-env:
-  UPSTREAM_CHECKOUT_DIR: upstream
-
 jobs:
-  prepare:
-    name: Resolve version and release tag
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-    steps:
-      - name: Checkout upstream (full history for git describe)
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.upstream-repository }}
-          ref: ${{ inputs.upstream-ref }}
-          fetch-depth: 0
-
-      - id: meta
-        shell: bash
-        env:
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-          FRANKENPHP_VERSION: ${{ inputs.frankenphp-version }}
-        run: |
-          set -euo pipefail
-          VERSION="$(git describe --tags --always)"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          if [[ -n "${INPUT_RELEASE_TAG}" ]]; then
-            echo "release_tag=${INPUT_RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
-          else
-            echo "release_tag=zts-fp-${FRANKENPHP_VERSION}-${GITHUB_RUN_NUMBER}" >> "${GITHUB_OUTPUT}"
-          fi
-
-  build:
+  builder:
     name: Build ${{ matrix.platform }}
-    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-#          - platform: linux/amd64
-#            slug: linux-amd64
-#          - platform: linux/arm64
-#            slug: linux-arm64
-#          - platform: linux/arm/v7
-#            slug: linux-arm-v7
+          #          - platform: linux/amd64
+          #            slug: linux-amd64
+          #          - platform: linux/arm64
+          #            slug: linux-arm64
+          #          - platform: linux/arm/v7
+          #            slug: linux-arm-v7
           - platform: linux/386
             slug: linux-386
     steps:
       - name: Checkout upstream source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ inputs.upstream-repository }}
           ref: ${{ inputs.upstream-ref }}
-          path: ${{ env.UPSTREAM_CHECKOUT_DIR }}
+          path: ${{ env.repo-dir }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -126,77 +72,137 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Same flow as scripts/build-zts-agent.sh: build --target builder, extract .so + daemon, tarball.
       - name: Build builder stage
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.UPSTREAM_CHECKOUT_DIR }}
-          file: ${{ env.UPSTREAM_CHECKOUT_DIR }}/Dockerfile.zts-build
+          context: ${{ env.repo-dir }}
+          file: ${{ env.repo-dir }}/Dockerfile.zts-build
           target: builder
           platforms: ${{ matrix.platform }}
           build-args: |
-            PHP_IMAGE=${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }}
+            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
           tags: nr-agent-builder:local
           push: false
           load: true
           cache-from: type=gha,scope=zts-${{ matrix.slug }}
           cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}
 
-      - name: Extract artifacts and create tarball
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          PLATFORM_SLUG: ${{ matrix.slug }}
+      - name: Create Dockerfile
         run: |
-          set -euo pipefail
+          cat > Dockerfile <<EOF
+          FROM scratch
+  
+          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/agent/modules/newrelic.so /newrelic.so
+          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/bin/daemon /newrelic-daemon
+          EOF
 
-          ARTIFACT_DIR="build/zts-artifacts"
-          mkdir -p "${ARTIFACT_DIR}"
-
-          CID="$(docker create nr-agent-builder:local)"
-          docker cp "${CID}:/usr/src/newrelic-php-agent/agent/modules/newrelic.so" \
-            "${ARTIFACT_DIR}/newrelic-zts.so"
-          docker cp "${CID}:/usr/src/newrelic-php-agent/bin/daemon" \
-            "${ARTIFACT_DIR}/newrelic-daemon"
-          docker rm "${CID}" >/dev/null
-
-          TARBALL="newrelic-php-agent-zts-${VERSION}-${PLATFORM_SLUG}.tar.gz"
-          tar czf "${TARBALL}" -C "${ARTIFACT_DIR}" newrelic-zts.so newrelic-daemon
-          ls -la "${TARBALL}"
-
-      - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+      - name: Build and push distribution image
+        uses: docker/build-push-action@v6
         with:
-          name: newrelic-zts-${{ matrix.slug }}
-          path: newrelic-php-agent-zts-*.tar.gz
-          if-no-files-found: error
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
 
-  release:
-    name: Create GitHub release
-    needs: [prepare, build]
-    if: ${{ inputs.create_release }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all tarballs
-        uses: actions/download-artifact@v4
-        with:
-          pattern: newrelic-zts-*
-          merge-multiple: true
-          path: release-assets
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.release_tag }}
-          name: newrelic-php-agent-zts ${{ needs.prepare.outputs.version }} (${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }})
-          body: |
-            Built from `${{ inputs.upstream-repository }}` @ `${{ inputs.upstream-ref }}`.
-
-            - **Agent version** (git describe): `${{ needs.prepare.outputs.version }}`
-            - **PHP_IMAGE**: `${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }}`
-            - **Platforms**: linux/amd64, linux/arm64, linux/arm/v7, linux/386
-
-            Tarballs contain `newrelic-zts.so` and `newrelic-daemon` (same layout as `scripts/build-zts-agent.sh`).
-          files: release-assets/*.tar.gz
-          fail_on_unmatched_files: true
-          generate_release_notes: true
+#  build:
+#    name: Build ${{ matrix.platform }}
+#    runs-on: ubuntu-latest
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        include:
+##          - platform: linux/amd64
+##            slug: linux-amd64
+##          - platform: linux/arm64
+##            slug: linux-arm64
+##          - platform: linux/arm/v7
+##            slug: linux-arm-v7
+#          - platform: linux/386
+#            slug: linux-386
+#    steps:
+#      - name: Checkout upstream source
+#        uses: actions/checkout@v4
+#        with:
+#          repository: ${{ inputs.upstream-repository }}
+#          ref: ${{ inputs.upstream-ref }}
+#          path: ${{ env.UPSTREAM_CHECKOUT_DIR }}
+#
+#      - name: Set up QEMU
+#        uses: docker/setup-qemu-action@v3
+#
+#      - name: Set up Docker Buildx
+#        uses: docker/setup-buildx-action@v3
+#
+#      # Same flow as scripts/build-zts-agent.sh: build --target builder, extract .so + daemon, tarball.
+#      - name: Build builder stage
+#        uses: docker/build-push-action@v6
+#        with:
+#          context: ${{ env.UPSTREAM_CHECKOUT_DIR }}
+#          file: ${{ env.UPSTREAM_CHECKOUT_DIR }}/Dockerfile.zts-build
+#          target: builder
+#          platforms: ${{ matrix.platform }}
+#          build-args: |
+#            PHP_IMAGE=${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }}
+#          tags: nr-agent-builder:local
+#          push: false
+#          load: true
+#          cache-from: type=gha,scope=zts-${{ matrix.slug }}
+#          cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}
+#
+#      - name: Extract artifacts and create tarball
+#        shell: bash
+#        env:
+#          VERSION: ${{ needs.prepare.outputs.version }}
+#          PLATFORM_SLUG: ${{ matrix.slug }}
+#        run: |
+#          set -euo pipefail
+#
+#          ARTIFACT_DIR="build/zts-artifacts"
+#          mkdir -p "${ARTIFACT_DIR}"
+#
+#          CID="$(docker create nr-agent-builder:local)"
+#          docker cp "${CID}:/usr/src/newrelic-php-agent/agent/modules/newrelic.so" \
+#            "${ARTIFACT_DIR}/newrelic-zts.so"
+#          docker cp "${CID}:/usr/src/newrelic-php-agent/bin/daemon" \
+#            "${ARTIFACT_DIR}/newrelic-daemon"
+#          docker rm "${CID}" >/dev/null
+#
+#          TARBALL="newrelic-php-agent-zts-${VERSION}-${PLATFORM_SLUG}.tar.gz"
+#          tar czf "${TARBALL}" -C "${ARTIFACT_DIR}" newrelic-zts.so newrelic-daemon
+#          ls -la "${TARBALL}"
+#
+#      - name: Upload tarball artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: newrelic-zts-${{ matrix.slug }}
+#          path: newrelic-php-agent-zts-*.tar.gz
+#          if-no-files-found: error
+#
+#  release:
+#    name: Create GitHub release
+#    needs: [prepare, build]
+#    if: ${{ inputs.create_release }}
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Download all tarballs
+#        uses: actions/download-artifact@v4
+#        with:
+#          pattern: newrelic-zts-*
+#          merge-multiple: true
+#          path: release-assets
+#
+#      - name: Publish release
+#        uses: softprops/action-gh-release@v2
+#        with:
+#          tag_name: ${{ needs.prepare.outputs.release_tag }}
+#          name: newrelic-php-agent-zts ${{ needs.prepare.outputs.version }} (${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }})
+#          body: |
+#            Built from `${{ inputs.upstream-repository }}` @ `${{ inputs.upstream-ref }}`.
+#
+#            - **Agent version** (git describe): `${{ needs.prepare.outputs.version }}`
+#            - **PHP_IMAGE**: `${{ inputs.frankenphp-image }}:${{ inputs.frankenphp-version }}`
+#            - **Platforms**: linux/amd64, linux/arm64, linux/arm/v7, linux/386
+#
+#            Tarballs contain `newrelic-zts.so` and `newrelic-daemon` (same layout as `scripts/build-zts-agent.sh`).
+#          files: release-assets/*.tar.gz
+#          fail_on_unmatched_files: true
+#          generate_release_notes: true
