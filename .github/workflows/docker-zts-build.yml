@@ -15,7 +15,7 @@ on:
       frankenphp-version:
         description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
         required: true
-        default: 1-php8.4
+        default: 1-builder-php8.4
       release_tag:
         description: Git tag for the GitHub release (leave empty to auto-generate)
         required: false
