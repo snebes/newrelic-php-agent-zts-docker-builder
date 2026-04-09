@@ -14,7 +14,7 @@ on:
       frankenphp-version:
         description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
         required: true
-        default: 1-builder-php8.4
+        default: 1-php8.5
       release_tag:
         description: Git tag for the GitHub release (leave empty to auto-generate)
         required: false
@@ -58,24 +58,30 @@ jobs:
 #          - platform: linux/386
 #            slug: linux-386
     steps:
-      - name: Checkout upstream source
-        uses: actions/checkout@v6
+      - name: Checkout workflow repository (docker-builder)
+        uses: actions/checkout@v4
         with:
-          path: 'build'
+          path: build
 
-      - name: Checkout upstream source
-        uses: actions/checkout@v6
+      - name: Checkout agent fork (ZTS branch)
+        uses: actions/checkout@v4
         with:
           repository: ${{ env.upstream-repo }}
           ref: ${{ env.upstream-ref }}
-          path: 'newrelic-php-agent-zts'
+          path: newrelic-php-agent-zts
+          fetch-depth: 0
 
-      - name: Update newrelic-php-agent-zts with upstream
-        run:
-          cd $GITHUB_WORKSPACE/newrelic-php-agent-zts
-          git remote add upstream https://github.com/newrelic/newrelic-php-agent.git
-          git fetch upstream
-          git merge upstream/main
+      - name: Merge official newrelic-php-agent into checkout
+        working-directory: newrelic-php-agent-zts
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream https://github.com/newrelic/newrelic-php-agent.git
+          fi
+          git fetch upstream --prune
+          git merge --no-edit upstream/main
 
 #      - name: Set up QEMU
 #        uses: docker/setup-qemu-action@v3
