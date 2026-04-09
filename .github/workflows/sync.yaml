@@ -119,9 +119,15 @@ jobs:
 
           echo "Tags to build: $(echo "${missing}" | jq -c .)"
 
+  prepare:
+    name: Prepare
+    needs: filter-tags
+    if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
+    uses: ./.github/workflows/prepare.yaml
+
   build:
     name: "Build ${{ matrix.frankenphp-version }}"
-    needs: filter-tags
+    needs: prepare
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
     strategy:
       fail-fast: false
