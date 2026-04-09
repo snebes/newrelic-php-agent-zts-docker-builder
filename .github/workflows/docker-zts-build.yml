@@ -84,10 +84,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            slug: linux-amd64
+          - platform: linux/arm/v7
+            slug: linux-arm-v7
           - platform: linux/arm64
             slug: linux-arm64
+          - platform: linux/amd64
+            slug: linux-amd64
+          - platform: linux/386
+            slug: linux-386
     steps:
       - name: Checkout workflow repository (docker-builder)
         uses: actions/checkout@v6
@@ -118,18 +122,17 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
-          tags: nr-agent-builder:${{ inputs.frankenphp-version }}
+          tags: nr-agent-builder:local
           push: false
           load: true
           cache-from: type=gha,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder
           cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder
 
-#      - name: Build container image
-#        uses: docker/build-push-action@v6
-#        with:
-#          context: agent-zts
-#          file: agent-zts/Dockerfile
-#          platforms: ${{ matrix.platform }}
-#          tags: nr-zts-bundle:local-${{ matrix.slug }}
-#          push: false
-#          load: true
+      - name: Build container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          tags: frankenphp-unofficial-newrelic:${{ inputs.frankenphp-version }}
+          push: true
