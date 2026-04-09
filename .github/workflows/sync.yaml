@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
-  packages: read
+  packages: write
 
 jobs:
   collect-tags:
