@@ -1,4 +1,4 @@
-name: Build New Relic PHP agent (ZTS) multi-arch release
+name: Build New Relic ZTS Agent
 
 permissions:
   actions: write
