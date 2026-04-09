@@ -93,6 +93,11 @@ jobs:
         run: |
           set -euo pipefail
           REPO_NAME="frankenphp-unofficial-newrelic"
+          NAMESPACE="${DOCKERHUB_USERNAME:-}"
+          if [[ -z "${NAMESPACE}" ]]; then
+            echo '::error::Set repository variable DOCKERHUB_USERNAME or secret DOCKERHUB_USERNAME (same namespace you push to).'
+            exit 1
+          fi
 
           printf '%s' "${TAGS_JSON}" > /tmp/desired.json
 
@@ -101,7 +106,7 @@ jobs:
           trap 'rm -rf "${workdir}"' EXIT
 
           existing='[]'
-          url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${REPO_NAME}/tags?page_size=100"
+          url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${REPO_NAME}/tags?page_size=100"
           page=0
           while [[ -n "${url}" ]]; do
             code="$(curl -sS -o "${workdir}/page.json" -w '%{http_code}' "${url}")" || true
@@ -115,7 +120,13 @@ jobs:
               existing='[]'
               break
             fi
-            names="$(jq -c '[.results[]?.name // empty]' "${workdir}/page.json")"
+            # Per-element .name; drop null/empty — NOT [.results[]?.name // empty] (can yield nulls / wrong precedence)
+            names="$(jq -c '
+              [ (.results // [])[]
+                | .name
+                | select(type == "string" and length > 0)
+              ]
+            ' "${workdir}/page.json")"
             nbatch="$(echo "${names}" | jq 'length')"
             existing="$(jq -s '.[0] + .[1]' <(echo "${existing}") <(echo "${names}"))"
             page=$((page + 1))
@@ -127,14 +138,22 @@ jobs:
             fi
           done
 
+          existing="$(echo "${existing}" | jq -c '[.[] | select(type == "string" and length > 0)] | unique')"
+
           echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from Docker Hub (${page} page(s))."
 
           missing="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
-            [ $desired[] as $t | select($have | index($t) | not) ]
+            [ $desired[] as $t
+              | select(($t | type) == "string" and ($t | length) > 0)
+              | select($have | index($t) | not)
+            ]
           ')"
 
           skipped="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
-            [ $desired[] as $t | select($have | index($t)) ]
+            [ $desired[] as $t
+              | select(($t | type) == "string" and ($t | length) > 0)
+              | select($have | index($t))
+            ]
           ')"
 
           echo "${skipped}" | jq -r '.[]' | while read -r t; do
