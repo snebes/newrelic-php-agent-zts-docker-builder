@@ -8,7 +8,6 @@ on:
 permissions:
   actions: write
   contents: read
-  packages: write
 
 jobs:
   collect-tags:
@@ -79,66 +78,56 @@ jobs:
           jq -r '.[]' "${workdir}/filtered.json" | sed 's/^/  /'
 
   filter-tags:
-    name: Skip tags already on GHCR
+    name: Skip tags already on Docker Hub
     needs: collect-tags
     if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
     runs-on: ubuntu-latest
     outputs:
       tags_json: ${{ steps.filter.outputs.tags_json }}
     steps:
-      - name: Drop tags that already exist on GHCR
+      - name: Drop tags that already exist on Docker Hub
         id: filter
         env:
           TAGS_JSON: ${{ needs.collect-tags.outputs.tags_json }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
-          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          NAME="${OWNER}/frankenphp-unofficial-newrelic"
+          REPO_NAME="frankenphp-unofficial-newrelic"
 
           printf '%s' "${TAGS_JSON}" > /tmp/desired.json
 
-          # One (or a few) registry API calls instead of N manifest inspects.
-          # https://distribution.github.io/distribution/spec/api/#listing-image-tags
+          # https://docs.docker.com/docker-hub/api/latest/#tag/Images/operation/GetRepositoryTags
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "${workdir}"' EXIT
+
           existing='[]'
-          last=""
+          url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${REPO_NAME}/tags?page_size=100"
           page=0
-          while true; do
-            hdr="$(mktemp)"
-            body="$(mktemp)"
-            code="$(
-              curl -sS -G -o "${body}" -D "${hdr}" -w '%{http_code}' \
-                --data-urlencode 'n=1000' \
-                ${last:+--data-urlencode "last=${last}"} \
-                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                -H 'Accept: application/json' \
-                "https://ghcr.io/v2/${NAME}/tags/list"
-            )" || true
-            rm -f "${hdr}"
+          while [[ -n "${url}" ]]; do
+            code="$(curl -sS -o "${workdir}/page.json" -w '%{http_code}' "${url}")" || true
             if [[ "${code}" == "404" ]]; then
-              echo '::notice::No GHCR tags yet (404) — all desired tags will be built.'
+              echo '::notice::Docker Hub repository not found (404) — all desired tags will be built.'
               existing='[]'
               break
             fi
             if [[ "${code}" != "200" ]]; then
-              echo "::warning::GHCR tags/list returned HTTP ${code} — assuming no existing tags."
+              echo "::warning::Docker Hub tags API returned HTTP ${code} — assuming no existing tags."
               existing='[]'
               break
             fi
-            batch="$(jq -c '.tags // []' "${body}")"
-            rm -f "${body}"
-            nbatch="$(echo "${batch}" | jq 'length')"
-            existing="$(jq -s '.[0] + .[1]' <(echo "${existing}") <(echo "${batch}"))"
+            names="$(jq -c '[.results[]?.name // empty]' "${workdir}/page.json")"
+            nbatch="$(echo "${names}" | jq 'length')"
+            existing="$(jq -s '.[0] + .[1]' <(echo "${existing}") <(echo "${names}"))"
             page=$((page + 1))
-            if [[ "${nbatch}" -lt 1000 ]]; then
-              break
-            fi
-            last="$(echo "${batch}" | jq -r '.[-1]')"
-            if [[ -z "${last}" || "${last}" == "null" ]]; then
-              break
+            next="$(jq -r '.next // empty' "${workdir}/page.json")"
+            if [[ -z "${next}" || "${next}" == "null" ]]; then
+              url=""
+            else
+              url="${next}"
             fi
           done
 
-          echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from GHCR (${page} page(s))."
+          echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from Docker Hub (${page} page(s))."
 
           missing="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
             [ $desired[] as $t | select($have | index($t) | not) ]
@@ -149,7 +138,7 @@ jobs:
           ')"
 
           echo "${skipped}" | jq -r '.[]' | while read -r t; do
-            echo "::notice::Skip (already on GHCR): ${t}"
+            echo "::notice::Skip (already on Docker Hub): ${t}"
           done
 
           echo "${missing}" | jq -r '.[]' | while read -r t; do

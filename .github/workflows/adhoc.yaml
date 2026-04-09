@@ -3,7 +3,6 @@ name: Adhoc Build New Relic ZTS Agent
 permissions:
   actions: write
   contents: read
-  packages: write
 
 env:
   upstream-repo: theophileds/newrelic-php-agent-zts
