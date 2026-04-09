@@ -19,12 +19,8 @@ on:
 
 jobs:
   build:
-    name: Docker ${{ matrix.platform }} (${{ inputs['frankenphp-version'] }})
+    name: Multi-arch Docker (${{ inputs['frankenphp-version'] }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: ['linux/arm/v7', 'linux/arm64', 'linux/amd64', 'linux/386']
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -52,13 +48,15 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Agent
+      # One buildx invocation with all platforms → single tag = manifest list (true multi-arch).
+      # A matrix of separate pushes to the same tag overwrites the manifest (last arch wins).
+      - name: Build and push (multi-platform)
         uses: docker/build-push-action@v7
         with:
           context: newrelic-php-agent-zts
           file: newrelic-php-agent-zts/Dockerfile.zts-build
           target: package
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/386
           build-args: |
             PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs['frankenphp-version'] }}
           tags: ${{ vars.DOCKERHUB_USERNAME }}/${{ env.dockerhub-repo-name }}:${{ inputs['frankenphp-version'] }}
