@@ -170,25 +170,16 @@ jobs:
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
     uses: ./.github/workflows/prepare.yaml
 
-  dispatch-builds:
-    name: Dispatch build — ${{ matrix.frankenphp-version }}
+  build:
+    name: "Build ${{ matrix.frankenphp-version }}"
     needs: [ collect-tags, filter-tags, prepare ]
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        frankenphp-version: ${{ fromJson(needs.collect-tags.outputs.tags_json) }}
-    steps:
-      - name: Trigger build workflow
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh workflow run build.yaml \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.ref_name }}" \
-            -f frankenphp-version="${{ matrix.frankenphp-version }}" \
-            -f artifact-run-id="${{ github.run_id }}"
-          echo "Dispatched build for ${{ matrix.frankenphp-version }} (artifact from run ${{ github.run_id }})."
+        frankenphp-version: ${{ fromJson(needs.filter-tags.outputs.tags_json) }}
+    uses: ./.github/workflows/build.yaml
+    with:
+      frankenphp-version: ${{ matrix.frankenphp-version }}
+    secrets: inherit
