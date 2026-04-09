@@ -19,7 +19,7 @@ on:
 
 jobs:
   build:
-    name: Multi-arch Docker (${{ inputs['frankenphp-version'] }})
+    name: "Build: ${{ inputs['frankenphp-version'] }}"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
