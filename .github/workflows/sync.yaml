@@ -172,7 +172,7 @@ jobs:
 
   dispatch-builds:
     name: Dispatch build — ${{ matrix.frankenphp-version }}
-    needs: [ filter-tags, prepare ]
+    needs: [ collect-tags, filter-tags, prepare ]
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
     runs-on: ubuntu-latest
     strategy:
