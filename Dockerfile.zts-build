@@ -20,9 +20,10 @@
 ARG GO_VERSION=1.25.7
 ARG PCRE_VERSION=8.45
 ARG PHP_IMAGE=dunglas/frankenphp:1-php8.3
+ARG TARGETPLATFORM=linux/amd64
 
 # --------------- Build stage ---------------
-FROM ${PHP_IMAGE} AS builder
+FROM --platform=$TARGETPLATFORM ${PHP_IMAGE} AS builder
 
 ARG GO_VERSION
 ARG PCRE_VERSION
