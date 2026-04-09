@@ -1,4 +1,4 @@
-name: Sync tags from dunglas/frankenphp
+name: Docker major version builder
 
 on:
   schedule:
