@@ -161,7 +161,7 @@ jobs:
 
   build:
     name: "Build ${{ matrix.frankenphp-version }}"
-    needs: [ collect-tags, filter-tags, prepare ]
+    needs: [ filter-tags, prepare ]
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
     strategy:
       fail-fast: false
