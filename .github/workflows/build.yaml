@@ -121,7 +121,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Agent
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: newrelic-php-agent-zts
           file: newrelic-php-agent-zts/Dockerfile.zts-build
