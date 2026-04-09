@@ -113,7 +113,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: newrelic-php-agent-zts
-          file: agent-zts/Dockerfile.zts-build
+          file: newrelic-php-agent-zts/Dockerfile.zts-build
           target: builder
           platforms: ${{ matrix.platform }}
           build-args: |
