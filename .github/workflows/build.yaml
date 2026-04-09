@@ -1,8 +1,9 @@
 name: Build New Relic PHP agent (ZTS) multi-arch release
 
 permissions:
-  contents: write
   actions: write
+  contents: read
+  packages: write
 
 env:
   upstream-repo: theophileds/newrelic-php-agent-zts
