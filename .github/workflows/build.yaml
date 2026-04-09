@@ -1,0 +1,130 @@
+name: Build New Relic PHP agent (ZTS) multi-arch release
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  upstream-repo: theophileds/newrelic-php-agent-zts
+  upstream-ref: zts-support
+  frankenphp-image: dunglas/frankenphp
+  artifact-name: newrelic-php-agent-zts
+
+on:
+  workflow_dispatch:
+    inputs:
+      frankenphp-version:
+        description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
+        required: true
+        default: 1-php8.5
+      release_tag:
+        description: Git tag for the GitHub release (leave empty to auto-generate)
+        required: false
+        default: ""
+      create_release:
+        description: Create a GitHub release and attach tarballs
+        type: boolean
+        default: true
+
+  workflow_call:
+    inputs:
+      frankenphp-version:
+        description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
+        required: true
+        type: string
+      release_tag:
+        description: Git tag for the GitHub release (empty = auto)
+        required: false
+        type: string
+        default: ""
+      create_release:
+        description: Create a GitHub release and attach tarballs
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  prepare:
+    name: Update agent repository and upload sources
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agent fork (ZTS branch)
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.upstream-repo }}
+          ref: ${{ env.upstream-ref }}
+          path: newrelic-php-agent-zts
+          fetch-depth: 0
+
+      - name: Merge official newrelic-php-agent into checkout
+        working-directory: newrelic-php-agent-zts
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream https://github.com/newrelic/newrelic-php-agent.git
+          fi
+          git fetch upstream --prune
+          git merge --no-edit upstream/main
+
+      - name: Upload agent source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact-name }}
+          path: newrelic-php-agent-zts
+          if-no-files-found: error
+          retention-days: 2
+
+  build:
+    name: Docker ${{ matrix.slug }} (${{ inputs.frankenphp-version }})
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/arm/v7
+            slug: linux-arm-v7
+          - platform: linux/arm64
+            slug: linux-arm64
+          - platform: linux/amd64
+            slug: linux-amd64
+          - platform: linux/386
+            slug: linux-386
+    steps:
+      - name: Checkout workflow repository (docker-builder)
+        uses: actions/checkout@v6
+
+      - name: Download agent source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.artifact-name }}
+          path: newrelic-php-agent-zts
+
+      - name: Copy Dockerfile.zts-build into newrelic-php-agent-zts
+        run: |
+          set -euo pipefail
+          cp -v Dockerfile.zts-build newrelic-php-agent-zts
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Build Agent
+        uses: docker/build-push-action@v6
+        with:
+          context: newrelic-php-agent-zts
+          file: newrelic-php-agent-zts/Dockerfile.zts-build
+          target: package
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
+          tags: frankenphp-unofficial-newrelic:${{ inputs.frankenphp-version }}
+          push: true
+          cache-from: type=gha,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder
+          cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder

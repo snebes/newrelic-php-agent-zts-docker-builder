@@ -68,22 +68,10 @@ COPY . .
 RUN make daemon OPTIMIZE=1
 RUN make agent OPTIMIZE=1 PCRE_STATIC=yes
 
-# --------------- Runtime stage ---------------
-FROM ${PHP_IMAGE}
 
-# Copy the compiled extension and daemon into the runtime image.
-COPY --from=builder /usr/src/newrelic-php-agent/agent/modules/newrelic.so \
-    /tmp/newrelic.so
-COPY --from=builder /usr/src/newrelic-php-agent/bin/daemon \
-    /usr/local/bin/newrelic-daemon
+# --------------- Package stage ---------------
 
-# Install the extension into the correct directory for this PHP version.
-RUN cp /tmp/newrelic.so "$(php-config --extension-dir)/newrelic.so" \
-    && rm /tmp/newrelic.so
+FROM scratch AS package
 
-# Create a minimal INI file. Override newrelic.appname and newrelic.license
-# via environment variables or by mounting your own INI.
-RUN echo "extension=newrelic.so" > /usr/local/etc/php/conf.d/newrelic.ini \
-    && echo "newrelic.enabled=true" >> /usr/local/etc/php/conf.d/newrelic.ini \
-    && echo 'newrelic.appname="My App"' >> /usr/local/etc/php/conf.d/newrelic.ini \
-    && echo "newrelic.daemon.address=/tmp/.newrelic.sock" >> /usr/local/etc/php/conf.d/newrelic.ini
+COPY --from=builder /usr/src/newrelic-php-agent/agent/modules/newrelic.so /newrelic.so
+COPY --from=builder /usr/src/newrelic-php-agent/bin/daemon /newrelic-daemon
