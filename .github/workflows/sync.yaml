@@ -86,32 +86,75 @@ jobs:
     outputs:
       tags_json: ${{ steps.filter.outputs.tags_json }}
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Drop tags that already exist in GHCR
+      - name: Drop tags that already exist on GHCR
         id: filter
         env:
           TAGS_JSON: ${{ needs.collect-tags.outputs.tags_json }}
         run: |
           set -euo pipefail
           OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          IMAGE="ghcr.io/${OWNER}/frankenphp-unofficial-newrelic"
+          NAME="${OWNER}/frankenphp-unofficial-newrelic"
 
-          printf '%s' "${TAGS_JSON}" > /tmp/tags.json
-          missing='[]'
-          while IFS= read -r tag; do
-            if docker manifest inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
-              echo "::notice::Skip (already on GHCR): ${tag}"
-            else
-              echo "Will build: ${tag}"
-              missing=$(echo "${missing}" | jq -c --arg t "${tag}" '. + [$t]')
+          printf '%s' "${TAGS_JSON}" > /tmp/desired.json
+
+          # One (or a few) registry API calls instead of N manifest inspects.
+          # https://distribution.github.io/distribution/spec/api/#listing-image-tags
+          existing='[]'
+          last=""
+          page=0
+          while true; do
+            hdr="$(mktemp)"
+            body="$(mktemp)"
+            code="$(
+              curl -sS -G -o "${body}" -D "${hdr}" -w '%{http_code}' \
+                --data-urlencode 'n=1000' \
+                ${last:+--data-urlencode "last=${last}"} \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                -H 'Accept: application/json' \
+                "https://ghcr.io/v2/${NAME}/tags/list"
+            )" || true
+            rm -f "${hdr}"
+            if [[ "${code}" == "404" ]]; then
+              echo '::notice::No GHCR tags yet (404) — all desired tags will be built.'
+              existing='[]'
+              break
             fi
-          done < <(jq -r '.[]' /tmp/tags.json)
+            if [[ "${code}" != "200" ]]; then
+              echo "::warning::GHCR tags/list returned HTTP ${code} — assuming no existing tags."
+              existing='[]'
+              break
+            fi
+            batch="$(jq -c '.tags // []' "${body}")"
+            rm -f "${body}"
+            nbatch="$(echo "${batch}" | jq 'length')"
+            existing="$(jq -s '.[0] + .[1]' <(echo "${existing}") <(echo "${batch}"))"
+            page=$((page + 1))
+            if [[ "${nbatch}" -lt 1000 ]]; then
+              break
+            fi
+            last="$(echo "${batch}" | jq -r '.[-1]')"
+            if [[ -z "${last}" || "${last}" == "null" ]]; then
+              break
+            fi
+          done
+
+          echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from GHCR (${page} page(s))."
+
+          missing="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
+            [ $desired[] as $t | select($have | index($t) | not) ]
+          ')"
+
+          skipped="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
+            [ $desired[] as $t | select($have | index($t)) ]
+          ')"
+
+          echo "${skipped}" | jq -r '.[]' | while read -r t; do
+            echo "::notice::Skip (already on GHCR): ${t}"
+          done
+
+          echo "${missing}" | jq -r '.[]' | while read -r t; do
+            echo "Will build: ${t}"
+          done
 
           {
             echo "tags_json<<__OUT__"
@@ -127,16 +170,25 @@ jobs:
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
     uses: ./.github/workflows/prepare.yaml
 
-  build:
-    name: "Build ${{ matrix.frankenphp-version }}"
+  dispatch-builds:
+    name: Dispatch build — ${{ matrix.frankenphp-version }}
     needs: [ filter-tags, prepare ]
     if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        frankenphp-version: ${{ fromJson(needs.filter-tags.outputs.tags_json) }}
-    uses: ./.github/workflows/build.yaml
-    with:
-      frankenphp-version: ${{ matrix.frankenphp-version }}
-    secrets: inherit
+        frankenphp-version: ${{ fromJson(needs.collect-tags.outputs.tags_json) }}
+    steps:
+      - name: Trigger build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run build.yaml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.ref_name }}" \
+            -f frankenphp-version="${{ matrix.frankenphp-version }}" \
+            -f artifact-run-id="${{ github.run_id }}"
+          echo "Dispatched build for ${{ matrix.frankenphp-version }} (artifact from run ${{ github.run_id }})."

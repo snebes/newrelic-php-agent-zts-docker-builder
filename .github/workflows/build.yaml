@@ -1,7 +1,7 @@
 name: Build New Relic ZTS Agent
 
 permissions:
-  actions: write
+  actions: read
   contents: read
   packages: write
 
@@ -10,16 +10,35 @@ env:
   frankenphp-image: dunglas/frankenphp
 
 on:
+  workflow_dispatch:
+    inputs:
+      frankenphp-version:
+        description: FrankenPHP image tag for PHP_IMAGE (e.g. 1-php8.5 or 1-php8.5-bookworm)
+        required: true
+        type: string
+      artifact-run-id:
+        description: >-
+          Actions run id of the workflow that uploaded the newrelic-php-agent-zts artifact
+          (open the Sync workflow run in the UI — the numeric id in the URL).
+        required: true
+        type: string
+
   workflow_call:
     inputs:
       frankenphp-version:
         description: FrankenPHP tag for PHP_IMAGE build-arg (e.g. 1-php8.4)
         required: true
         type: string
+      artifact-run-id:
+        description: >-
+          Leave empty when this workflow shares the same run as the job that uploaded the artifact.
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build:
-    name: Docker ${{ matrix.slug }} · ${{ matrix.os }} (${{ inputs.frankenphp-version }})
+    name: Docker ${{ matrix.platform }} (${{ inputs['frankenphp-version'] }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -29,11 +48,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Download agent source artifact
+      - name: Download agent source artifact (same workflow run)
+        if: ${{ inputs['artifact-run-id'] == '' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.artifact-name }}
           path: newrelic-php-agent-zts
+
+      - name: Download agent source artifact (from another run)
+        if: ${{ inputs['artifact-run-id'] != '' }}
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ inputs['artifact-run-id'] }}
+          name: ${{ env.artifact-name }}
+          path: newrelic-php-agent-zts
+
+      - name: Flatten artifact layout
+        run: |
+          set -euo pipefail
+          if [ -d newrelic-php-agent-zts/newrelic-php-agent-zts ]; then
+            shopt -s dotglob
+            mv newrelic-php-agent-zts/newrelic-php-agent-zts/* newrelic-php-agent-zts/
+            rmdir newrelic-php-agent-zts/newrelic-php-agent-zts
+          fi
 
       - name: Copy Dockerfile.zts-build into newrelic-php-agent-zts
         run: |
@@ -61,6 +99,6 @@ jobs:
           target: package
           platforms: ${{ matrix.platform }}
           build-args: |
-            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
-          tags: ghcr.io/${{ github.repository_owner }}/frankenphp-unofficial-newrelic:${{ inputs.frankenphp-version }}
+            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs['frankenphp-version'] }}
+          tags: ghcr.io/${{ github.repository_owner }}/frankenphp-unofficial-newrelic:${{ inputs['frankenphp-version'] }}
           push: true
