@@ -19,7 +19,7 @@ jobs:
     needs: [ prepare ]
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
         frankenphp-version: [ '1', '1.12', '1.11', '1.10' ]
         php-version: ['8', '8.5', '8.4', '8.3', '8.2', '8.1']
