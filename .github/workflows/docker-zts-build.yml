@@ -86,6 +86,7 @@ jobs:
       - name: Copy fixed Dockerfiles in
         working-directory: newrelic-php-agent-zts
         run: |
+          ls -la ..
           cp ../builder/Dockerfile.zts-build .
           cp ../builder/Dockerfile .
           ls -la
