@@ -6,7 +6,7 @@ permissions:
 env:
   artifact-name: newrelic-php-agent-zts
   frankenphp-image: dunglas/frankenphp
-  # Pushed as ${{ secrets.DOCKERHUB_USERNAME }}/dockerhub-repo-name
+  # Pushed as ${{ vars.DOCKERHUB_USERNAME }}/dockerhub-repo-name
   dockerhub-repo-name: frankenphp-unofficial-newrelic
 
 on:
@@ -61,5 +61,5 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs['frankenphp-version'] }}
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.dockerhub-repo-name }}:${{ inputs['frankenphp-version'] }}
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/${{ env.dockerhub-repo-name }}:${{ inputs['frankenphp-version'] }}
           push: true
