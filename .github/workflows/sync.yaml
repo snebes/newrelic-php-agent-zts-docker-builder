@@ -79,121 +79,21 @@ jobs:
           echo "Matching tags (${n}):"
           jq -r '.[]' "${workdir}/filtered.json" | sed 's/^/  /'
 
-  filter-tags:
-    name: Skip tags already on Docker Hub
-    needs: collect-tags
-    if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
-    runs-on: ubuntu-latest
-    outputs:
-      tags_json: ${{ steps.filter.outputs.tags_json }}
-    steps:
-      - name: Drop tags that already exist on Docker Hub
-        id: filter
-        env:
-          TAGS_JSON: ${{ needs.collect-tags.outputs.tags_json }}
-          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-          DOCKERHUB_USERNAME_SECRET: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          set -euo pipefail
-          REPO_NAME="frankenphp-unofficial-newrelic"
-          NAMESPACE="${DOCKERHUB_USERNAME:-${DOCKERHUB_USERNAME_SECRET:-}}"
-          if [[ -z "${NAMESPACE}" ]]; then
-            echo '::error::Set repository variable DOCKERHUB_USERNAME or secret DOCKERHUB_USERNAME (same namespace you push to).'
-            exit 1
-          fi
-
-          printf '%s' "${TAGS_JSON}" > /tmp/desired.json
-          jq -e 'type == "array"' /tmp/desired.json >/dev/null || { echo '::error::TAGS_JSON is not a JSON array'; exit 1; }
-          jq -c '[.[] | select(type == "string" and length > 0)]' /tmp/desired.json > /tmp/desired.clean.json
-          mv /tmp/desired.clean.json /tmp/desired.json
-
-          # https://docs.docker.com/docker-hub/api/latest/#tag/Images/operation/GetRepositoryTags
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-
-          existing='[]'
-          url="https://hub.docker.com/v2/repositories/${NAMESPACE}/${REPO_NAME}/tags?page_size=100"
-          page=0
-          while [[ -n "${url}" ]]; do
-            code="$(curl -sS -o "${workdir}/page.json" -w '%{http_code}' "${url}")" || true
-            if [[ "${code}" == "404" ]]; then
-              echo '::notice::Docker Hub repository not found (404) — all desired tags will be built.'
-              existing='[]'
-              break
-            fi
-            if [[ "${code}" != "200" ]]; then
-              echo "::warning::Docker Hub tags API returned HTTP ${code} — assuming no existing tags."
-              existing='[]'
-              break
-            fi
-            # Per-element .name; drop null/empty — NOT [.results[]?.name // empty] (can yield nulls / wrong precedence)
-            names="$(jq -c '
-              [ (.results // [])[]
-                | .name
-                | select(type == "string" and length > 0)
-              ]
-            ' "${workdir}/page.json")"
-            nbatch="$(echo "${names}" | jq 'length')"
-            existing="$(jq -s '.[0] + .[1]' <(echo "${existing}") <(echo "${names}"))"
-            page=$((page + 1))
-            next="$(jq -r '.next // empty' "${workdir}/page.json")"
-            if [[ -z "${next}" || "${next}" == "null" ]]; then
-              url=""
-            else
-              url="${next}"
-            fi
-          done
-
-          existing="$(echo "${existing}" | jq -c '[.[] | select(type == "string" and length > 0)] | unique')"
-
-          echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from Docker Hub (${page} page(s))."
-
-          # index($t) returns a number or null — never use "| not" on that (breaks for 0 and null).
-          missing="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
-            [ $desired[] as $t
-              | select(($t | type) == "string" and ($t | length) > 0)
-              | select(($have | index($t)) == null)
-            ]
-          ')"
-
-          skipped="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
-            [ $desired[] as $t
-              | select(($t | type) == "string" and ($t | length) > 0)
-              | select(($have | index($t)) != null)
-            ]
-          ')"
-
-          echo "${skipped}" | jq -r '.[]' | while read -r t; do
-            echo "::notice::Skip (already on Docker Hub): ${t}"
-          done
-
-          echo "${missing}" | jq -r '.[]' | while read -r t; do
-            echo "Will build: ${t}"
-          done
-
-          {
-            echo "tags_json<<__OUT__"
-            echo "${missing}"
-            echo "__OUT__"
-          } >> "${GITHUB_OUTPUT}"
-
-          echo "Tags to build: $(echo "${missing}" | jq -c .)"
-
   prepare:
     name: Prepare
-    needs: filter-tags
-    if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
+    needs: collect-tags
+    if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
     uses: ./.github/workflows/prepare.yaml
 
   build:
     name: "Build ${{ matrix.frankenphp-version }}"
-    needs: [ filter-tags, prepare ]
-    if: ${{ needs.filter-tags.outputs.tags_json != '[]' }}
+    needs: [ collect-tags, prepare ]
+    if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        frankenphp-version: ${{ fromJson(needs.filter-tags.outputs.tags_json) }}
+        frankenphp-version: ${{ fromJson(needs.collect-tags.outputs.tags_json) }}
     uses: ./.github/workflows/build.yaml
     with:
       frankenphp-version: ${{ matrix.frankenphp-version }}
