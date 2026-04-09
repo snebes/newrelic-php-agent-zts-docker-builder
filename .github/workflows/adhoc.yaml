@@ -19,15 +19,15 @@ on:
         default: 1-php8.5
 
 jobs:
-  adhoc:
-    name: Adhoc build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get agent artifact
-        uses: ./.github/workflows/prepare.yaml
+  prepare:
+    name: Prepare agent sources
+    uses: ./.github/workflows/prepare.yaml
+    secrets: inherit
 
-      - name: Build agent
-        uses: ./.github/workflows/build.yaml
-        with:
-          frankenphp-version: ${{ inputs.frankenphp-version }}
-  
+  build:
+    name: Build and push image
+    needs: prepare
+    uses: ./.github/workflows/build.yaml
+    with:
+      frankenphp-version: ${{ inputs['frankenphp-version'] }}
+    secrets: inherit
