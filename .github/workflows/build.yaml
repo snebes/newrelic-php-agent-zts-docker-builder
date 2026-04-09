@@ -129,7 +129,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
-          tags: ghcr.io/${{ github.repository_owner }}frankenphp-unofficial-newrelic:${{ inputs.frankenphp-version }}
+          tags: ghcr.io/${{ github.repository_owner }}/frankenphp-unofficial-newrelic:${{ inputs.frankenphp-version }}
           push: true
           cache-from: type=gha,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder
           cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}-${{ inputs.frankenphp-version }}-builder
