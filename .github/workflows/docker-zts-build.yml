@@ -6,7 +6,6 @@ permissions:
 env:
   upstream-repo: theophileds/newrelic-php-agent-zts
   upstream-ref: zts-support
-  repo-dir: repo
   frankenphp-image: dunglas/frankenphp
 
 on:
@@ -62,46 +61,64 @@ jobs:
       - name: Checkout upstream source
         uses: actions/checkout@v6
         with:
+          path: 'build'
+
+      - name: Checkout upstream source
+        uses: actions/checkout@v6
+        with:
           repository: ${{ env.upstream-repo }}
           ref: ${{ env.upstream-ref }}
-          path: ${{ env.repo-dir }}
+          path: 'newrelic-php-agent-zts'
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Update newrelic-php-agent-zts with upstream
+        run:
+          cd $GITHUB_WORKSPACE/newrelic-php-agent-zts
+          git remote add upstream https://github.com/newrelic/newrelic-php-agent.git
+          git fetch upstream
+          git merge upstream/main
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#      - name: Set up QEMU
+#        uses: docker/setup-qemu-action@v3
+#
+#      - name: Set up Docker Buildx
+#        uses: docker/setup-buildx-action@v3
+#
+#      - name: Build new relic zts image
+#        uses: docker/build-push-action@v6
+#        with:
+#          context: ${{ env.repo-dir }}
+#          file: ${{ env.repo-dir }}/Dockerfile.zts-build
+#          target: builder
+#          platforms: ${{ matrix.platform }}
+#          build-args: |
+#            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
+#          tags: nr-agent-builder:${{ inputs.frankenphp-version }}
+#          push: false
+#          load: true
+#          cache-from: type=gha,scope=zts-${{ matrix.slug }}
+#          cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}
+#
+#      - name: Create Dockerfile
+#        env:
+#
+#        run: |
+#          cat > Dockerfile <<EOF
+#          FROM scratch
+#
+#          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/agent/modules/newrelic.so /newrelic.so
+#          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/bin/daemon /newrelic-daemon
+#          EOF
+#
+#      - name: Build and push distribution image
+#        uses: docker/build-push-action@v6
+#        with:
+#          context: .
+#          file: Dockerfile
+#          platforms: ${{ matrix.platform }}
+#
 
-      - name: Build builder stage
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ env.repo-dir }}
-          file: ${{ env.repo-dir }}/Dockerfile.zts-build
-          target: builder
-          platforms: ${{ matrix.platform }}
-          build-args: |
-            PHP_IMAGE=${{ env.frankenphp-image }}:${{ inputs.frankenphp-version }}
-          tags: nr-agent-builder:local
-          push: false
-          load: true
-          cache-from: type=gha,scope=zts-${{ matrix.slug }}
-          cache-to: type=gha,mode=max,scope=zts-${{ matrix.slug }}
 
-      - name: Create Dockerfile
-        run: |
-          cat > Dockerfile <<EOF
-          FROM scratch
-  
-          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/agent/modules/newrelic.so /newrelic.so
-          COPY --from=nr-agent-builder:local /usr/src/newrelic-php-agent/bin/daemon /newrelic-daemon
-          EOF
 
-      - name: Build and push distribution image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: ${{ matrix.platform }}
 
 #  build:
 #    name: Build ${{ matrix.platform }}
