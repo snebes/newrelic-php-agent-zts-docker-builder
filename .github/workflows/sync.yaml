@@ -41,10 +41,12 @@ jobs:
             pages=$((pages + 1))
           done
 
-          # Names like 1-php8.5, 1.2-php8.3 — <fp>-php<php> (each part dotted 0–2 segments)
+          # Names like 1-php8.5, 1.2-php8.3 — only string .name (skip bad API rows); then regex
           jq -c '
             [ .[]
+              | objects
               | .name
+              | select(type == "string")
               | select(
                   test("^[0-9]+(\\.[0-9]+){0,2}-php[0-9]+(\\.[0-9]+){0,2}(-(trixie|bookworm))?$")
                 )
@@ -90,16 +92,20 @@ jobs:
         env:
           TAGS_JSON: ${{ needs.collect-tags.outputs.tags_json }}
           DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_USERNAME_SECRET: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
           REPO_NAME="frankenphp-unofficial-newrelic"
-          NAMESPACE="${DOCKERHUB_USERNAME:-}"
+          NAMESPACE="${DOCKERHUB_USERNAME:-${DOCKERHUB_USERNAME_SECRET:-}}"
           if [[ -z "${NAMESPACE}" ]]; then
             echo '::error::Set repository variable DOCKERHUB_USERNAME or secret DOCKERHUB_USERNAME (same namespace you push to).'
             exit 1
           fi
 
           printf '%s' "${TAGS_JSON}" > /tmp/desired.json
+          jq -e 'type == "array"' /tmp/desired.json >/dev/null || { echo '::error::TAGS_JSON is not a JSON array'; exit 1; }
+          jq -c '[.[] | select(type == "string" and length > 0)]' /tmp/desired.json > /tmp/desired.clean.json
+          mv /tmp/desired.clean.json /tmp/desired.json
 
           # https://docs.docker.com/docker-hub/api/latest/#tag/Images/operation/GetRepositoryTags
           workdir="$(mktemp -d)"
@@ -142,17 +148,18 @@ jobs:
 
           echo "Fetched $(echo "${existing}" | jq 'length') tag(s) from Docker Hub (${page} page(s))."
 
+          # index($t) returns a number or null — never use "| not" on that (breaks for 0 and null).
           missing="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
             [ $desired[] as $t
               | select(($t | type) == "string" and ($t | length) > 0)
-              | select($have | index($t) | not)
+              | select(($have | index($t)) == null)
             ]
           ')"
 
           skipped="$(jq -n --argjson desired "$(cat /tmp/desired.json)" --argjson have "${existing}" '
             [ $desired[] as $t
               | select(($t | type) == "string" and ($t | length) > 0)
-              | select($have | index($t))
+              | select(($have | index($t)) != null)
             ]
           ')"
 
