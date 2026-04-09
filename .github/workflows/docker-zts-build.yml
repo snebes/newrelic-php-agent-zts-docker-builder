@@ -83,12 +83,18 @@ jobs:
           git fetch upstream --prune
           git merge --no-edit upstream/main
 
-#      - name: Set up QEMU
-#        uses: docker/setup-qemu-action@v3
-#
-#      - name: Set up Docker Buildx
-#        uses: docker/setup-buildx-action@v3
-#
+      - name: Copy fixed Dockerfiles in
+        working-directory: newrelic-php-agent-zts
+        run: |
+          cp ../builder/Dockerfile.zts-build .
+          cp ../builder/Dockerfile .
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
 #      - name: Build new relic zts image
 #        uses: docker/build-push-action@v6
 #        with:
