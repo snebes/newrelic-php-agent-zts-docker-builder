@@ -1,0 +1,75 @@
+name: Sync tags from dunglas/frankenphp
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  collect-tags:
+    name: Collects tags from docker hub
+    runs-on: ubuntu-latest
+    outputs:
+      tags_json: ${{ steps.fetch.outputs.tags_json }}
+    steps:
+      - name: Fetch tags
+        id: fetch
+        env:
+          PAGE_SIZE: "100"
+          MAX_PAGES: "50"
+          MAX_TAGS: "100"
+        run: |
+          set -euo pipefail
+
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "${workdir}"' EXIT
+
+          echo '[]' > "${workdir}/accum.json"
+          url="https://hub.docker.com/v2/repositories/dunglas/frankenphp/tags?page_size=${PAGE_SIZE}"
+          pages=0
+
+          while [[ -n "${url}" && "${pages}" -lt "${MAX_PAGES}" ]]; do
+            curl -fsSL "${url}" -o "${workdir}/page.json"
+            jq -s '.[0] + .[1].results' "${workdir}/accum.json" "${workdir}/page.json" \
+              > "${workdir}/accum.next.json"
+            mv "${workdir}/accum.next.json" "${workdir}/accum.json"
+            url="$(jq -r '.next // empty' "${workdir}/page.json")"
+            pages=$((pages + 1))
+          done
+
+          # Names like 1-php8.5, 1.2-php8.3 — <fp>-php<php> (each part dotted 0–2 segments)
+          jq -c '
+            [ .[]
+              | .name
+              | select(
+                  test("^[0-9]+(\\.[0-9]+){0,2}-php[0-9]+(\\.[0-9]+){0,2}$")
+                )
+              ]
+            | unique
+            | sort
+          ' "${workdir}/accum.json" > "${workdir}/filtered.json"
+
+          max="${MAX_TAGS:-0}"
+          if [[ "${max}" =~ ^[0-9]+$ ]] && [[ "${max}" -gt 0 ]]; then
+            jq -c --argjson lim "${max}" '.[:$lim]' "${workdir}/filtered.json" > "${workdir}/limited.json"
+            mv "${workdir}/limited.json" "${workdir}/filtered.json"
+          fi
+
+          n="$(jq 'length' "${workdir}/filtered.json")"
+          if [[ "${n}" -gt 256 ]]; then
+            echo "::warning::${n} tags match; GitHub matrix allows 256 jobs — truncating to 256."
+            jq -c '.[:256]' "${workdir}/filtered.json" > "${workdir}/trunc.json"
+            mv "${workdir}/trunc.json" "${workdir}/filtered.json"
+            n=256
+          fi
+
+          tags_json="$(cat "${workdir}/filtered.json")"
+          {
+            echo "tags_json<<__TAGS_JSON__"
+            echo "${tags_json}"
+            echo "__TAGS_JSON__"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Matching tags (${n}):"
+          jq -r '.[]' "${workdir}/filtered.json" | sed 's/^/  /'
