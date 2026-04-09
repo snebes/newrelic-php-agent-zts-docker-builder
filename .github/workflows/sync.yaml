@@ -79,21 +79,97 @@ jobs:
           echo "Matching tags (${n}):"
           jq -r '.[]' "${workdir}/filtered.json" | sed 's/^/  /'
 
+  filter-missing-tags:
+    name: Tags not yet on Docker Hub
+    runs-on: ubuntu-latest
+    needs: collect-tags
+    outputs:
+      tags_json: ${{ steps.filter.outputs.tags_json }}
+    env:
+      PAGE_SIZE: "100"
+      MAX_PAGES: "50"
+      DOCKERHUB_REPO: frankenphp-unofficial-newrelic
+    steps:
+      - name: Filter to tags missing from our repository
+        id: filter
+        env:
+          UPSTREAM_TAGS_JSON: ${{ needs.collect-tags.outputs.tags_json }}
+          DOCKERHUB_USER: ${{ vars.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$(echo "${UPSTREAM_TAGS_JSON}" | jq 'length')" -eq 0 ]]; then
+            echo 'No upstream tags to check; skipping Docker Hub listing.'
+            tags_json='[]'
+            {
+              echo "tags_json<<__TAGS_JSON__"
+              echo "${tags_json}"
+              echo "__TAGS_JSON__"
+            } >> "${GITHUB_OUTPUT}"
+            echo "Missing (not on Hub yet) (0):"
+            exit 0
+          fi
+
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "${workdir}"' EXIT
+
+          url="https://hub.docker.com/v2/repositories/${DOCKERHUB_USER}/${DOCKERHUB_REPO}/tags?page_size=${PAGE_SIZE}"
+          pages=0
+          echo '[]' > "${workdir}/accum.json"
+
+          while [[ -n "${url}" && "${pages}" -lt "${MAX_PAGES}" ]]; do
+            code="$(curl -sS -o "${workdir}/page.json" -w "%{http_code}" "${url}")"
+            if [[ "${code}" == "404" ]]; then
+              echo "Repository has no tags yet (404); all upstream tags are missing locally."
+              echo '[]' > "${workdir}/existing-names.json"
+              break
+            fi
+            if [[ "${code}" != "200" ]]; then
+              echo "::error::Unexpected HTTP ${code} when listing ${url}"
+              exit 1
+            fi
+            jq -s '.[0] + .[1].results' "${workdir}/accum.json" "${workdir}/page.json" \
+              > "${workdir}/accum.next.json"
+            mv "${workdir}/accum.next.json" "${workdir}/accum.json"
+            url="$(jq -r '.next // empty' "${workdir}/page.json")"
+            pages=$((pages + 1))
+          done
+
+          if [[ ! -f "${workdir}/existing-names.json" ]]; then
+            jq -c '[.[].name | select(type == "string")]' "${workdir}/accum.json" \
+              > "${workdir}/existing-names.json"
+          fi
+
+          tags_json="$(echo "${UPSTREAM_TAGS_JSON}" | jq -c --slurpfile existing "${workdir}/existing-names.json" '
+            ($existing[0]) as $e
+            | [ .[] | select(. as $t | ($e | index($t)) == null) ]
+          ')"
+
+          {
+            echo "tags_json<<__TAGS_JSON__"
+            echo "${tags_json}"
+            echo "__TAGS_JSON__"
+          } >> "${GITHUB_OUTPUT}"
+
+          n="$(echo "${tags_json}" | jq 'length')"
+          echo "Missing (not on Hub yet) (${n}):"
+          echo "${tags_json}" | jq -r '.[]' | sed 's/^/  /'
+
   prepare:
     name: Prepare
-    needs: collect-tags
-    if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
+    needs: filter-missing-tags
+    if: ${{ needs.filter-missing-tags.outputs.tags_json != '[]' }}
     uses: ./.github/workflows/prepare.yaml
 
   build:
     name: "Build ${{ matrix.frankenphp-version }}"
-    needs: [ collect-tags, prepare ]
-    if: ${{ needs.collect-tags.outputs.tags_json != '[]' }}
+    needs: [ filter-missing-tags, prepare ]
+    if: ${{ needs.filter-missing-tags.outputs.tags_json != '[]' }}
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        frankenphp-version: ${{ fromJson(needs.collect-tags.outputs.tags_json) }}
+        frankenphp-version: ${{ fromJson(needs.filter-missing-tags.outputs.tags_json) }}
     uses: ./.github/workflows/build.yaml
     with:
       frankenphp-version: ${{ matrix.frankenphp-version }}
