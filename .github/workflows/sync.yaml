@@ -20,7 +20,7 @@ jobs:
         env:
           PAGE_SIZE: "100"
           MAX_PAGES: "50"
-          MAX_TAGS: "5"
+          MAX_TAGS: "200"
         run: |
           set -euo pipefail
 
